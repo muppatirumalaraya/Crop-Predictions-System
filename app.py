@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 import pickle
 import numpy as np
@@ -142,11 +143,11 @@ def register():
         
     if request.method == 'POST':
         fullname = request.form.get('fullname')
-        email = request.form.get('email')
+        email = (request.form.get('email') or '').strip().lower()
         password = request.form.get('password')
         
         # Check if email already exists
-        user = User.query.filter_by(email=email).first()
+        user = User.query.filter(func.lower(User.email) == email).first()
         if user:
             flash('Email already exists.')
             return redirect(url_for('register'))
@@ -172,10 +173,10 @@ def login():
         return redirect(url_for('home'))
         
     if request.method == 'POST':
-        email = request.form.get('email')
+        email = (request.form.get('email') or '').strip().lower()
         password = request.form.get('password')
         
-        user = User.query.filter_by(email=email).first()
+        user = User.query.filter(func.lower(User.email) == email).first()
         
         if user and check_password_hash(user.password_hash, password):
             login_user(user)
@@ -197,7 +198,7 @@ def forgot_password():
             return redirect(url_for('forgot_password'))
 
         try:
-            user = User.query.filter_by(email=email).first()
+            user = User.query.filter(func.lower(User.email) == email).first()
 
             if user:
                 # Generate a secure token
@@ -209,9 +210,12 @@ def forgot_password():
                 # Create reset link
                 reset_link = url_for('reset_password', token=token, _external=True)
 
-                # Send Email via SMTP (prefer environment values over hard-coded credentials)
-                sender_email = os.getenv('SMTP_EMAIL', "dndvenom@gmail.com")
-                sender_password = os.getenv('SMTP_APP_PASSWORD', "xhaf qgaz ljwz sbsh")
+                # Send Email via SMTP (configured through environment variables)
+                smtp_host = os.getenv('SMTP_HOST', 'smtp.gmail.com')
+                smtp_port = int(os.getenv('SMTP_PORT', '587'))
+                smtp_username = os.getenv('SMTP_EMAIL', '')
+                smtp_password = os.getenv('SMTP_APP_PASSWORD', '')
+                sender_email = os.getenv('SMTP_FROM', smtp_username)
 
                 msg = MIMEMultipart()
                 msg['From'] = sender_email
@@ -226,9 +230,12 @@ def forgot_password():
                 msg.attach(MIMEText(body, 'plain'))
 
                 try:
-                    with smtplib.SMTP('smtp.gmail.com', 587, timeout=10) as server:
+                    if not smtp_username or not smtp_password:
+                        raise ValueError("SMTP credentials missing. Set SMTP_EMAIL and SMTP_APP_PASSWORD.")
+
+                    with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
                         server.starttls()
-                        server.login(sender_email, sender_password)
+                        server.login(smtp_username, smtp_password)
                         server.sendmail(sender_email, user.email, msg.as_string())
 
                     print(f"\n✅ Password reset email successfully sent to {user.email}")
@@ -238,6 +245,8 @@ def forgot_password():
                     print("\n" + "=" * 60)
                     print(f"🔗 [FALLBACK] Reset Link: {reset_link}")
                     print("=" * 60 + "\n")
+                    if app.debug:
+                        flash(f"Email could not be sent. Use this reset link: {reset_link}", 'warning')
             else:
                 # Same message for security (don't reveal if email exists)
                 print(f"\n⚠️  Password reset attempted for non-existent email: {email}")
