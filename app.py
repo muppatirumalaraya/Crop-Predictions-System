@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy.exc import SQLAlchemyError
 import pickle
 import numpy as np
 from datetime import datetime, timedelta
@@ -190,53 +191,69 @@ def forgot_password():
         return redirect(url_for('home'))
     
     if request.method == 'POST':
-        email = request.form.get('email')
-        user = User.query.filter_by(email=email).first()
-        
-        if user:
-            # Generate a secure token
-            token = secrets.token_urlsafe(32)
-            user.reset_token = token
-            user.reset_token_expiry = datetime.utcnow() + timedelta(hours=1)  # Token valid for 1 hour
-            db.session.commit()
-            
-            # Create reset link
-            reset_link = url_for('reset_password', token=token, _external=True)
-            
-            # Send Email via SMTP
-            sender_email = "dndvenom@gmail.com"  # UPDATE THIS with your actual email
-            sender_password = "xhaf qgaz ljwz sbsh"  # UPDATE THIS with your actual app password
-            
-            msg = MIMEMultipart()
-            msg['From'] = sender_email
-            msg['To'] = user.email
-            msg['Subject'] = "Password Reset Request"
-            
-            body = f'''Hello {user.fullname},\n\nTo reset your password, visit the following link:\n{reset_link}\n\nIf you did not make this request, simply ignore this email and no changes will be made.'''
-            msg.attach(MIMEText(body, 'plain'))
-            
-            try:
-                server = smtplib.SMTP('smtp.gmail.com', 587)
-                server.starttls()
-                server.login(sender_email, sender_password)
-                server.sendmail(sender_email, user.email, msg.as_string())
-                server.quit()
-                
-                print(f"\n✅ Password reset email successfully sent to {user.email}")
-                flash('An email has been sent with instructions to reset your password.', 'success')
-            except Exception as e:
-                print(f"\n❌ Failed to send email: {e}")
-                # Fallback to console print if email fails
-                print("\n" + "="*60)
-                print(f"🔗 [FALLBACK] Reset Link: {reset_link}")
-                print("="*60 + "\n")
-                flash('Failed to send the email. Please check the console output if you are the developer.', 'warning')
-        else:
-            # Same message for security (don't reveal if email exists)
-            print(f"\n⚠️  Password reset attempted for non-existent email: {email}")
+        email = (request.form.get('email') or '').strip().lower()
+        if not email:
+            flash('Please enter a valid email address.', 'warning')
+            return redirect(url_for('forgot_password'))
+
+        try:
+            user = User.query.filter_by(email=email).first()
+
+            if user:
+                # Generate a secure token
+                token = secrets.token_urlsafe(32)
+                user.reset_token = token
+                user.reset_token_expiry = datetime.utcnow() + timedelta(hours=1)  # Token valid for 1 hour
+                db.session.commit()
+
+                # Create reset link
+                reset_link = url_for('reset_password', token=token, _external=True)
+
+                # Send Email via SMTP (prefer environment values over hard-coded credentials)
+                sender_email = os.getenv('SMTP_EMAIL', "dndvenom@gmail.com")
+                sender_password = os.getenv('SMTP_APP_PASSWORD', "xhaf qgaz ljwz sbsh")
+
+                msg = MIMEMultipart()
+                msg['From'] = sender_email
+                msg['To'] = user.email
+                msg['Subject'] = "Password Reset Request"
+
+                body = (
+                    f"Hello {user.fullname},\n\n"
+                    f"To reset your password, visit the following link:\n{reset_link}\n\n"
+                    "If you did not make this request, simply ignore this email and no changes will be made."
+                )
+                msg.attach(MIMEText(body, 'plain'))
+
+                try:
+                    with smtplib.SMTP('smtp.gmail.com', 587, timeout=10) as server:
+                        server.starttls()
+                        server.login(sender_email, sender_password)
+                        server.sendmail(sender_email, user.email, msg.as_string())
+
+                    print(f"\n✅ Password reset email successfully sent to {user.email}")
+                except Exception as e:
+                    print(f"\n❌ Failed to send email: {e}")
+                    # Fallback to console print if email fails
+                    print("\n" + "=" * 60)
+                    print(f"🔗 [FALLBACK] Reset Link: {reset_link}")
+                    print("=" * 60 + "\n")
+            else:
+                # Same message for security (don't reveal if email exists)
+                print(f"\n⚠️  Password reset attempted for non-existent email: {email}")
+
+            # Uniform response to prevent account enumeration.
             flash('If your email exists in our system, a password reset link has been sent.', 'info')
-            
-        return render_template('forgot_password.html')
+            return redirect(url_for('forgot_password'))
+        except SQLAlchemyError as e:
+            db.session.rollback()
+            app.logger.error(f"Forgot password database error: {e}")
+            flash('Unable to process reset request right now. Please try again.', 'error')
+            return redirect(url_for('forgot_password'))
+        except Exception as e:
+            app.logger.error(f"Forgot password unexpected error: {e}")
+            flash('Unable to process reset request right now. Please try again.', 'error')
+            return redirect(url_for('forgot_password'))
     
     return render_template('forgot_password.html')
 
@@ -245,7 +262,13 @@ def reset_password(token):
     if current_user.is_authenticated:
         return redirect(url_for('home'))
     
-    user = User.query.filter_by(reset_token=token).first()
+    try:
+        user = User.query.filter_by(reset_token=token).first()
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        app.logger.error(f"Reset password lookup error: {e}")
+        flash('Unable to process reset request right now. Please try again.', 'error')
+        return redirect(url_for('forgot_password'))
     
     # Check if token exists and is valid
     if not user or not user.reset_token_expiry or user.reset_token_expiry < datetime.utcnow():
@@ -264,7 +287,13 @@ def reset_password(token):
             user.password_hash = generate_password_hash(password)
             user.reset_token = None
             user.reset_token_expiry = None
-            db.session.commit()
+            try:
+                db.session.commit()
+            except SQLAlchemyError as e:
+                db.session.rollback()
+                app.logger.error(f"Reset password commit error: {e}")
+                flash('Unable to reset password right now. Please try again.', 'error')
+                return render_template('reset_password.html', token=token)
             
             print(f"\n✅ Password successfully reset for user: {user.email}")
             flash('Your password has been reset successfully. Please login with your new password.', 'success')
