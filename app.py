@@ -7,6 +7,9 @@ import numpy as np
 from datetime import datetime, timedelta
 import os
 import secrets
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'  # Change this to a random secret key
@@ -200,23 +203,34 @@ def forgot_password():
             # Create reset link
             reset_link = url_for('reset_password', token=token, _external=True)
             
-            # Console output for college project demonstration
-            print("\n" + "="*60)
-            print("🔐 PASSWORD RESET REQUEST - COLLEGE PROJECT DEMO")
-            print("="*60)
-            print(f"👤 User: {user.fullname}")
-            print(f"📧 Email: {email}")
-            print(f"🔗 Reset Link: {reset_link}")
-            print(f"⏰ Token Expires: {user.reset_token_expiry.strftime('%Y-%m-%d %H:%M:%S')}")
-            print(f"🔑 Token: {token}")
-            print("="*60)
-            print("📝 INSTRUCTIONS:")
-            print("   1. Copy the reset link above")
-            print("   2. Paste it in your browser")
-            print("   3. Set a new password")
-            print("="*60 + "\n")
+            # Send Email via SMTP
+            sender_email = "dndvenom@gmail.com"  # UPDATE THIS with your actual email
+            sender_password = "xhaf qgaz ljwz sbsh"  # UPDATE THIS with your actual app password
             
-            flash('Password reset link has been generated! Check the console for the link.', 'success')
+            msg = MIMEMultipart()
+            msg['From'] = sender_email
+            msg['To'] = user.email
+            msg['Subject'] = "Password Reset Request"
+            
+            body = f'''Hello {user.fullname},\n\nTo reset your password, visit the following link:\n{reset_link}\n\nIf you did not make this request, simply ignore this email and no changes will be made.'''
+            msg.attach(MIMEText(body, 'plain'))
+            
+            try:
+                server = smtplib.SMTP('smtp.gmail.com', 587)
+                server.starttls()
+                server.login(sender_email, sender_password)
+                server.sendmail(sender_email, user.email, msg.as_string())
+                server.quit()
+                
+                print(f"\n✅ Password reset email successfully sent to {user.email}")
+                flash('An email has been sent with instructions to reset your password.', 'success')
+            except Exception as e:
+                print(f"\n❌ Failed to send email: {e}")
+                # Fallback to console print if email fails
+                print("\n" + "="*60)
+                print(f"🔗 [FALLBACK] Reset Link: {reset_link}")
+                print("="*60 + "\n")
+                flash('Failed to send the email. Please check the console output if you are the developer.', 'warning')
         else:
             # Same message for security (don't reveal if email exists)
             print(f"\n⚠️  Password reset attempted for non-existent email: {email}")
