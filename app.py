@@ -211,11 +211,14 @@ def forgot_password():
                 reset_link = url_for('reset_password', token=token, _external=True)
 
                 # Send Email via SMTP (configured through environment variables)
-                smtp_host = os.getenv('SMTP_HOST', 'smtp.gmail.com')
-                smtp_port = int(os.getenv('SMTP_PORT', '587'))
-                smtp_username = os.getenv('SMTP_EMAIL', '')
-                smtp_password = os.getenv('SMTP_APP_PASSWORD', '')
-                sender_email = os.getenv('SMTP_FROM', smtp_username)
+                smtp_host = (os.getenv('SMTP_HOST', 'smtp.gmail.com') or '').strip()
+                smtp_port = int((os.getenv('SMTP_PORT', '587') or '587').strip())
+                smtp_username = (os.getenv('SMTP_EMAIL', '') or '').strip()
+                # Gmail app password is shown in groups; remove spaces to avoid auth failures.
+                smtp_password = (os.getenv('SMTP_APP_PASSWORD', '') or '').replace(' ', '').strip()
+                sender_email = (os.getenv('SMTP_FROM', smtp_username) or '').strip()
+                smtp_use_ssl = (os.getenv('SMTP_USE_SSL', 'false') or '').strip().lower() == 'true'
+                smtp_use_tls = (os.getenv('SMTP_USE_TLS', 'true') or '').strip().lower() == 'true'
 
                 msg = MIMEMultipart()
                 msg['From'] = sender_email
@@ -233,10 +236,18 @@ def forgot_password():
                     if not smtp_username or not smtp_password:
                         raise ValueError("SMTP credentials missing. Set SMTP_EMAIL and SMTP_APP_PASSWORD.")
 
-                    with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-                        server.starttls()
-                        server.login(smtp_username, smtp_password)
-                        server.sendmail(sender_email, user.email, msg.as_string())
+                    if smtp_use_ssl or smtp_port == 465:
+                        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as server:
+                            server.login(smtp_username, smtp_password)
+                            server.sendmail(sender_email, user.email, msg.as_string())
+                    else:
+                        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+                            server.ehlo()
+                            if smtp_use_tls:
+                                server.starttls()
+                                server.ehlo()
+                            server.login(smtp_username, smtp_password)
+                            server.sendmail(sender_email, user.email, msg.as_string())
 
                     print(f"\n✅ Password reset email successfully sent to {user.email}")
                 except Exception as e:
