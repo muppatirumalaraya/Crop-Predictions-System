@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import os
 import secrets
 import smtplib
+import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -100,6 +101,69 @@ CROP_IMAGES = {
 
 # Default image if crop image is not found
 DEFAULT_CROP_IMAGE = 'default_crop.jpg'
+
+def send_password_reset_email(recipient_email, recipient_name, reset_link):
+    """Send password reset email via Resend API (preferred on cloud) or SMTP fallback."""
+    subject = "Password Reset Request"
+    body = (
+        f"Hello {recipient_name},\n\n"
+        f"To reset your password, visit the following link:\n{reset_link}\n\n"
+        "If you did not make this request, simply ignore this email and no changes will be made."
+    )
+
+    # Preferred for deployed environments where SMTP egress is blocked.
+    resend_api_key = (os.getenv('RESEND_API_KEY', '') or '').strip()
+    if resend_api_key:
+        resend_from = (os.getenv('RESEND_FROM', os.getenv('SMTP_FROM', 'onboarding@resend.dev')) or '').strip()
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {resend_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from": resend_from,
+                "to": [recipient_email],
+                "subject": subject,
+                "text": body,
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        return "resend"
+
+    # SMTP fallback (useful for local/dev).
+    smtp_host = (os.getenv('SMTP_HOST', 'smtp.gmail.com') or '').strip()
+    smtp_port = int((os.getenv('SMTP_PORT', '587') or '587').strip())
+    smtp_username = (os.getenv('SMTP_EMAIL', '') or '').strip()
+    # Gmail app password is shown in groups; remove spaces to avoid auth failures.
+    smtp_password = (os.getenv('SMTP_APP_PASSWORD', '') or '').replace(' ', '').strip()
+    sender_email = (os.getenv('SMTP_FROM', smtp_username) or '').strip()
+    smtp_use_ssl = (os.getenv('SMTP_USE_SSL', 'false') or '').strip().lower() == 'true'
+    smtp_use_tls = (os.getenv('SMTP_USE_TLS', 'true') or '').strip().lower() == 'true'
+
+    if not smtp_username or not smtp_password:
+        raise ValueError("SMTP credentials missing. Set SMTP_EMAIL and SMTP_APP_PASSWORD, or RESEND_API_KEY.")
+
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = recipient_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
+    if smtp_use_ssl or smtp_port == 465:
+        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as server:
+            server.login(smtp_username, smtp_password)
+            server.sendmail(sender_email, recipient_email, msg.as_string())
+    else:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+            server.ehlo()
+            if smtp_use_tls:
+                server.starttls()
+                server.ehlo()
+            server.login(smtp_username, smtp_password)
+            server.sendmail(sender_email, recipient_email, msg.as_string())
+    return "smtp"
 
 def validate_inputs(inputs):
     """Validate if inputs are within realistic agricultural ranges"""
@@ -210,46 +274,9 @@ def forgot_password():
                 # Create reset link
                 reset_link = url_for('reset_password', token=token, _external=True)
 
-                # Send Email via SMTP (configured through environment variables)
-                smtp_host = (os.getenv('SMTP_HOST', 'smtp.gmail.com') or '').strip()
-                smtp_port = int((os.getenv('SMTP_PORT', '587') or '587').strip())
-                smtp_username = (os.getenv('SMTP_EMAIL', '') or '').strip()
-                # Gmail app password is shown in groups; remove spaces to avoid auth failures.
-                smtp_password = (os.getenv('SMTP_APP_PASSWORD', '') or '').replace(' ', '').strip()
-                sender_email = (os.getenv('SMTP_FROM', smtp_username) or '').strip()
-                smtp_use_ssl = (os.getenv('SMTP_USE_SSL', 'false') or '').strip().lower() == 'true'
-                smtp_use_tls = (os.getenv('SMTP_USE_TLS', 'true') or '').strip().lower() == 'true'
-
-                msg = MIMEMultipart()
-                msg['From'] = sender_email
-                msg['To'] = user.email
-                msg['Subject'] = "Password Reset Request"
-
-                body = (
-                    f"Hello {user.fullname},\n\n"
-                    f"To reset your password, visit the following link:\n{reset_link}\n\n"
-                    "If you did not make this request, simply ignore this email and no changes will be made."
-                )
-                msg.attach(MIMEText(body, 'plain'))
-
                 try:
-                    if not smtp_username or not smtp_password:
-                        raise ValueError("SMTP credentials missing. Set SMTP_EMAIL and SMTP_APP_PASSWORD.")
-
-                    if smtp_use_ssl or smtp_port == 465:
-                        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as server:
-                            server.login(smtp_username, smtp_password)
-                            server.sendmail(sender_email, user.email, msg.as_string())
-                    else:
-                        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-                            server.ehlo()
-                            if smtp_use_tls:
-                                server.starttls()
-                                server.ehlo()
-                            server.login(smtp_username, smtp_password)
-                            server.sendmail(sender_email, user.email, msg.as_string())
-
-                    print(f"\n✅ Password reset email successfully sent to {user.email}")
+                    provider = send_password_reset_email(user.email, user.fullname, reset_link)
+                    print(f"\n✅ Password reset email successfully sent to {user.email} via {provider}")
                 except Exception as e:
                     print(f"\n❌ Failed to send email: {e}")
                     # Fallback to console print if email fails
