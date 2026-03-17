@@ -1,6 +1,4 @@
-HEAD
 from pathlib import Path
-2dc5e511 (initial commit)
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -17,11 +15,6 @@ import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-<<<<<<< HEAD
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key'  # Change this to a random secret key
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///crop_predictor.db'
-=======
 BASE_DIR = Path(__file__).resolve().parent
 INSTANCE_DIR = BASE_DIR / 'instance'
 INSTANCE_DIR.mkdir(exist_ok=True)
@@ -31,7 +24,6 @@ DATABASE_PATH = INSTANCE_DIR / 'crop_predictor.db'
 app = Flask(__name__, instance_path=str(INSTANCE_DIR))
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key')  # Set SECRET_KEY in production
 app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{DATABASE_PATH}"
->>>>>>> 2dc5e511 (initial commit)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize SQLAlchemy
@@ -44,11 +36,7 @@ login_manager.login_view = 'login'
 
 # Load trained model
 try:
-<<<<<<< HEAD
-    with open('model.pkl', 'rb') as f:
-=======
     with open(MODEL_PATH, 'rb') as f:
->>>>>>> 2dc5e511 (initial commit)
         model = pickle.load(f)
 except FileNotFoundError:
     print("Warning: model.pkl not found. Please run train_model.py first.")
@@ -77,25 +65,15 @@ class Prediction(db.Model):
     predicted_crop = db.Column(db.String(50), nullable=False)
     date_predicted = db.Column(db.DateTime, default=datetime.utcnow)
 
-<<<<<<< HEAD
-=======
-
 def initialize_database():
     """Ensure SQLite storage exists when the app is loaded by Gunicorn."""
     with app.app_context():
         db.create_all()
-
->>>>>>> 2dc5e511 (initial commit)
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-<<<<<<< HEAD
-=======
-
 initialize_database()
-
->>>>>>> 2dc5e511 (initial commit)
 # Input validation ranges for agricultural parameters
 VALID_RANGES = {
     'nitrogen': {'min': 0, 'max': 150, 'error': 'Nitrogen should be between 0-150 kg/ha'},
@@ -134,7 +112,7 @@ CROP_IMAGES = {
 }
 
 # Default image if crop image is not found
-DEFAULT_CROP_IMAGE = 'default_crop.jpg'
+DEFAULT_CROP_IMAGE = 'default.jpg.jpg'
 
 def send_password_reset_email(recipient_email, recipient_name, reset_link):
     """Send password reset email via Resend API (preferred on cloud) or SMTP fallback."""
@@ -145,33 +123,11 @@ def send_password_reset_email(recipient_email, recipient_name, reset_link):
         "If you did not make this request, simply ignore this email and no changes will be made."
     )
 
-<<<<<<< HEAD
-=======
     provider_errors = []
-
->>>>>>> 2dc5e511 (initial commit)
     # Preferred for deployed environments where SMTP egress is blocked.
     resend_api_key = (os.getenv('RESEND_API_KEY', '') or '').strip()
     if resend_api_key:
         resend_from = (os.getenv('RESEND_FROM', os.getenv('SMTP_FROM', 'onboarding@resend.dev')) or '').strip()
-<<<<<<< HEAD
-        response = requests.post(
-            "https://api.resend.com/emails",
-            headers={
-                "Authorization": f"Bearer {resend_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "from": resend_from,
-                "to": [recipient_email],
-                "subject": subject,
-                "text": body,
-            },
-            timeout=15,
-        )
-        response.raise_for_status()
-        return "resend"
-=======
         try:
             response = requests.post(
                 "https://api.resend.com/emails",
@@ -194,7 +150,6 @@ def send_password_reset_email(recipient_email, recipient_name, reset_link):
             return "resend"
         except Exception as e:
             provider_errors.append(f"resend failed: {e}")
->>>>>>> 2dc5e511 (initial commit)
 
     # SMTP fallback (useful for local/dev).
     smtp_host = (os.getenv('SMTP_HOST', 'smtp.gmail.com') or '').strip()
@@ -207,11 +162,8 @@ def send_password_reset_email(recipient_email, recipient_name, reset_link):
     smtp_use_tls = (os.getenv('SMTP_USE_TLS', 'true') or '').strip().lower() == 'true'
 
     if not smtp_username or not smtp_password:
-<<<<<<< HEAD
-=======
         if provider_errors:
             raise ValueError(" ; ".join(provider_errors))
->>>>>>> 2dc5e511 (initial commit)
         raise ValueError("SMTP credentials missing. Set SMTP_EMAIL and SMTP_APP_PASSWORD, or RESEND_API_KEY.")
 
     msg = MIMEMultipart()
@@ -220,21 +172,6 @@ def send_password_reset_email(recipient_email, recipient_name, reset_link):
     msg['Subject'] = subject
     msg.attach(MIMEText(body, 'plain'))
 
-<<<<<<< HEAD
-    if smtp_use_ssl or smtp_port == 465:
-        with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as server:
-            server.login(smtp_username, smtp_password)
-            server.sendmail(sender_email, recipient_email, msg.as_string())
-    else:
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
-            server.ehlo()
-            if smtp_use_tls:
-                server.starttls()
-                server.ehlo()
-            server.login(smtp_username, smtp_password)
-            server.sendmail(sender_email, recipient_email, msg.as_string())
-    return "smtp"
-=======
     try:
         if smtp_use_ssl or smtp_port == 465:
             with smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10) as server:
@@ -252,7 +189,6 @@ def send_password_reset_email(recipient_email, recipient_name, reset_link):
     except Exception as e:
         provider_errors.append(f"smtp failed: {e}")
         raise RuntimeError(" ; ".join(provider_errors))
->>>>>>> 2dc5e511 (initial commit)
 
 def validate_inputs(inputs):
     """Validate if inputs are within realistic agricultural ranges"""
@@ -372,12 +308,8 @@ def forgot_password():
                     print("\n" + "=" * 60)
                     print(f"🔗 [FALLBACK] Reset Link: {reset_link}")
                     print("=" * 60 + "\n")
-<<<<<<< HEAD
-                    if app.debug:
-=======
                     show_fallback_link = (os.getenv('SHOW_RESET_LINK_ON_FAILURE', 'true') or '').strip().lower() == 'true'
                     if show_fallback_link:
->>>>>>> 2dc5e511 (initial commit)
                         flash(f"Email could not be sent. Use this reset link: {reset_link}", 'warning')
             else:
                 # Same message for security (don't reveal if email exists)
